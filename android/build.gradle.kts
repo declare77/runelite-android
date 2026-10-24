@@ -166,7 +166,7 @@ if (androidSdkAvailable) {
         // invokedynamic makeConcatWithConstants sites whose recipes use constant
         // types D8's StringConcat desugarer rejects, so we pre-rewrite them to
         // calls into IndyConcat at build time. See desugarStringConcat below.
-        "implementation"(files(desugarApis))
+        // Patched client jar is added after desugarApis is defined (see below).
 
         "implementation"("com.google.guava:guava:33.6.0-android")
     }
@@ -353,6 +353,15 @@ val desugarApis = if (androidSdkAvailable) {
         }
     }
 } else null
+
+// The injected client must be wired in only after desugarApis exists: referenced earlier in
+// the script it is still null, files(null) is empty, and the APK ships without the game
+// client ("Didn't find class \"client\"" at boot).
+if (androidSdkAvailable) {
+    dependencies {
+        "implementation"(files(desugarApis!!))
+    }
+}
 
 // shaderc (GLSL -> SPIR-V) for the 117 HD Vulkan backend, which compiles 117 HD's generated
 // shaders at runtime. Built once per ABI from the NDK's own shaderc sources into
