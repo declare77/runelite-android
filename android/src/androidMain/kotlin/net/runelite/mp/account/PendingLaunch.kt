@@ -47,9 +47,7 @@ internal object PendingLaunch
 
     /**
      * What this start should launch with: the one-shot selection an account switch just wrote,
-     * or, on an ordinary cold start, the account picked last time. A Jagex account goes through
-     * [JagexAccountStore.prepare] first, exactly as the picker does, because the session id it
-     * launched with yesterday is stale by now. Null when nothing was ever picked, or when the
+     * or, on an ordinary cold start, the account picked last time. Null when nothing was ever picked, or when the
      * renewal fails -- the client then boots to its plain login screen and the account manager
      * is there to pick again.
      *
@@ -60,16 +58,8 @@ internal object PendingLaunch
         importDropped(context)
         consume(context)?.let { return it }
 
-        val lastType = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_LAST_TYPE, null)
-        val jagex = lastJagex(context)
-        val imported = lastImported(context)
-
-        return when (lastType)
-        {
-            TYPE_IMPORT -> imported ?: jagex
-            TYPE_JAGEX -> jagex ?: imported
-            else -> jagex ?: imported
-        }
+        // Hardened build: imported credentials are the only account source.
+        return lastImported(context)
     }
 
     /**
@@ -106,25 +96,6 @@ internal object PendingLaunch
         finally
         {
             drop.delete()
-        }
-    }
-
-    private fun lastJagex(context: Context): AccountSelection?
-    {
-        val characterId = JagexAccountStore.lastCharacterId(context) ?: return null
-        val account = JagexAccountStore.list(context)
-            .firstOrNull { acc -> acc.characters.any { it.accountId == characterId } }
-            ?: return null
-        return try
-        {
-            val ready = JagexAccountStore.prepare(context, account)
-            val character = ready.characters.firstOrNull { it.accountId == characterId } ?: return null
-            AccountSelection(credentials = JagexAccountStore.credentials(ready, character))
-        }
-        catch (t: Throwable)
-        {
-            Log.w(TAG, "could not renew the last Jagex account; booting without it", t)
-            null
         }
     }
 

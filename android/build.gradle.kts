@@ -61,11 +61,7 @@ plugins {
 
 if (androidSdkAvailable) {
     apply(plugin = "com.android.application")
-    // Firebase wiring. Google Services plugin must come AFTER the Android plugin so it
-    // can hook the variant pipeline; Crashlytics plugin attaches mapping.txt upload to
-    // each release variant once R8 is on.
-    apply(plugin = "com.google.gms.google-services")
-    apply(plugin = "com.google.firebase.crashlytics")
+    // Hardened build: Firebase (Crashlytics / Analytics) removed.
 }
 
 // common.settings.gradle.kts forces options.release = 11 on every JavaCompile task.
@@ -142,17 +138,6 @@ if (androidSdkAvailable) {
         "implementation"(compose.ui)
         "implementation"(compose.components.resources)
         "implementation"(libs.androidx.activity.compose)
-        // Firebase. BoM coordinates the individual product versions so they
-        // can't drift apart. Crashlytics auto-installs an uncaught handler on
-        // first FirebaseApp init; we still front it with AndroidCrashReporter
-        // to add Compose-state breadcrumbs that Crashlytics can't see.
-        //
-        // KotlinDependencyHandler.platform() doesn't accept the catalog's
-        // Provider<MinimalExternalModuleDependency> directly, so route
-        // through the project's standard DependencyHandler which does.
-        "implementation"(platform(libs.firebase.bom))
-        "implementation"(libs.firebase.crashlytics)
-        "implementation"(libs.firebase.analytics)
         // Phone → watch relay of the Jagex sign-in redirect (WearRelay).
         "implementation"(libs.play.services.wearable)
         // android-awt provides the shadow java.awt / javax.swing / javax.sound surface

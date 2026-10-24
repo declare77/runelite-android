@@ -44,31 +44,11 @@ internal object UpdateChecker
 
     data class Release(val tag: String, val apkName: String, val apkUrl: String, val apkSize: Long)
 
-    /** The latest published release if it is newer than this build, else null. */
-    fun newerRelease(): Release?
-    {
-        return try
-        {
-            val json = JSONObject(get("$API/releases/latest"))
-            val tag = json.getString("tag_name")
-            if (compareTags(tag, currentTag) <= 0) return null
-            val assets = json.getJSONArray("assets")
-            for (i in 0 until assets.length())
-            {
-                val asset = assets.getJSONObject(i)
-                val name = asset.getString("name")
-                if (name.endsWith(".apk"))
-                    return Release(tag, name, asset.getString("browser_download_url"), asset.optLong("size", -1))
-            }
-            Log.w(TAG, "release $tag has no APK asset")
-            null
-        }
-        catch (t: Throwable)
-        {
-            Log.w(TAG, "release check failed", t)
-            null
-        }
-    }
+    /**
+     * Hardened build: self-update is disabled. This build never checks for, downloads or
+     * installs updates from the upstream releases; update by rebuilding from your own fork.
+     */
+    fun newerRelease(): Release? = null
 
     /**
      * Repo owner first, then authors of merged PRs by PR count. Upstream RuneLite's own
@@ -80,33 +60,8 @@ internal object UpdateChecker
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val cached = prefs.getString("contributors", null)?.split(',')?.filter { it.isNotEmpty() }
         val fresh = System.currentTimeMillis() - prefs.getLong("contributorsAt", 0) < CONTRIBUTORS_TTL_MS
-        val logins = if (cached != null && fresh) cached else try
-        {
-            val owner = JSONObject(get(API)).getJSONObject("owner").getString("login")
-            val counts = LinkedHashMap<String, Int>()
-            for (page in 1..3)
-            {
-                val pulls = JSONArray(get("$API/pulls?state=closed&per_page=100&page=$page"))
-                for (i in 0 until pulls.length())
-                {
-                    val pr = pulls.getJSONObject(i)
-                    if (pr.isNull("merged_at")) continue
-                    val user = pr.optJSONObject("user") ?: continue
-                    if (user.optString("type") == "Bot") continue
-                    val login = user.getString("login")
-                    counts[login] = (counts[login] ?: 0) + 1
-                }
-                if (pulls.length() < 100) break
-            }
-            val list = listOf(owner) + counts.entries.sortedByDescending { it.value }.map { it.key }.filter { it != owner }
-            prefs.edit().putString("contributors", list.joinToString(",")).putLong("contributorsAt", System.currentTimeMillis()).apply()
-            list
-        }
-        catch (t: Throwable)
-        {
-            Log.w(TAG, "contributor fetch failed", t)
-            cached ?: FALLBACK_CONTRIBUTORS
-        }
+        // Hardened build: no network lookup for the credits list.
+        val logins = FALLBACK_CONTRIBUTORS
         // Several accounts can belong to one person; credit them once
         return logins.map { DISPLAY_NAMES[it] ?: it }.distinct()
     }
@@ -114,6 +69,7 @@ internal object UpdateChecker
     /** Downloads [release] into the cache, reporting progress in 0..1 (or -1 when the size is unknown). */
     fun download(context: Context, release: Release, onProgress: (Float) -> Unit): File
     {
+        throw UnsupportedOperationException("Self-update is disabled in this build")
         val dir = File(context.cacheDir, "updates").apply { mkdirs() }
         dir.listFiles()?.forEach { it.delete() }
         val target = File(dir, release.apkName)
@@ -150,6 +106,7 @@ internal object UpdateChecker
     /** Hands the APK to the system installer; Android asks for "install unknown apps" the first time. */
     fun install(context: Context, apk: File)
     {
+        throw UnsupportedOperationException("Self-update is disabled in this build")
         val uri = FileProvider.getUriForFile(context, "${context.packageName}.updates", apk)
         context.startActivity(Intent(Intent.ACTION_VIEW)
             .setDataAndType(uri, "application/vnd.android.package-archive")
@@ -165,6 +122,7 @@ internal object UpdateChecker
      */
     fun installSession(context: Context, apk: File)
     {
+        throw UnsupportedOperationException("Self-update is disabled in this build")
         val installer = context.packageManager.packageInstaller
         val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply {
             setAppPackageName(context.packageName)

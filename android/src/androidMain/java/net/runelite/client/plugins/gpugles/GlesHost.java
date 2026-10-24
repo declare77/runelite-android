@@ -10,7 +10,6 @@ import android.util.Log;
 import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
-import com.google.firebase.crashlytics.FirebaseCrashlytics;
 
 /**
  * Lifetime owner of the EGL14 display/context + the GLES surface tied to the
@@ -460,9 +459,6 @@ public final class GlesHost
 
 			Log.e(TAG, msg);
 
-			FirebaseCrashlytics.getInstance().log(msg);
-			FirebaseCrashlytics.getInstance().recordException(
-					new RuntimeException(msg));
 			return null;
 		}
 

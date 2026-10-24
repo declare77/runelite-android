@@ -39,10 +39,6 @@ plugins {
     alias(libs.plugins.kotlin.compose) apply false
     alias(libs.plugins.compose.multiplatform) apply false
     alias(libs.plugins.rust.android) apply false
-    // Firebase wiring for the Android target. Plugins must sit on the root classloader
-    // so the android subproject can apply them without re-resolving from the catalog.
-    alias(libs.plugins.google.services) apply false
-    alias(libs.plugins.firebase.crashlytics) apply false
 }
 
 tasks.register("cleanAll") {

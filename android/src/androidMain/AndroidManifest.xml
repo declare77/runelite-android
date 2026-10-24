@@ -5,8 +5,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <!-- Self-update from GitHub releases (UpdateChecker); we don't ship through Play. -->
-    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Hardened build: self-update disabled, so no REQUEST_INSTALL_PACKAGES. -->
     <uses-permission
             android:name="com.google.android.gms.permission.AD_ID"
             tools:node="remove" />
@@ -25,20 +24,7 @@
         android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
         <service android:name=".account.RuneLiteLoginService" android:exported="false" android:foregroundServiceType="shortService" />
         <profileable android:shell="true" android:enabled="true" />
-        <!-- Shares downloaded update APKs with the system package installer. -->
-        <provider
-            android:name="androidx.core.content.FileProvider"
-            android:authorities="${applicationId}.updates"
-            android:exported="false"
-            android:grantUriPermissions="true">
-            <meta-data
-                android:name="android.support.FILE_PROVIDER_PATHS"
-                android:resource="@xml/update_paths" />
-        </provider>
-        <!-- PackageInstaller session results for the watch auto-update (UpdateChecker.installSession). -->
-        <receiver
-            android:name=".update.UpdateInstallReceiver"
-            android:exported="false" />
+        <!-- Hardened build: update FileProvider and install receiver removed. -->
         <!-- Trampoline for AppRestart: lives in its own process so it can kill the app's
              process and start MainActivity fresh (an account switch needs a cold start). -->
         <activity
@@ -60,30 +46,8 @@
             </intent-filter>
         </activity>
 
-        <!-- Jagex account sign-in. Its own Activity so sign-in owns a screen with a real
-             lifecycle, separate from the game host. Plain launch mode and not exported:
-             the whole flow stays inside this WebView, so nothing external ever needs to
-             route back into it. -->
-        <activity
-            android:name=".account.JagexLoginActivity"
-            android:exported="true"
-            android:launchMode="singleTask"
-            android:configChanges="orientation|screenSize|keyboard|keyboardHidden|screenLayout|smallestScreenSize"
-            android:theme="@android:style/Theme.Black.NoTitleBar">
-            <!-- The OAuth redirect for Jagex's mobile client, which is what lets sign-in
-                 run in the real browser and come back as an Intent. The scheme is the one
-                 that client is registered with at Jagex, so it is not ours to choose; the
-                 official OSRS app claims the same one, and with both installed Android
-                 will ask which should receive the redirect. singleTask so it arrives at
-                 the instance already running the flow, via onNewIntent, rather than
-                 stacking a second copy. -->
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="com.jagex.mobilesdk.android.osrs" />
-            </intent-filter>
-        </activity><!--
+        <!-- Hardened build: in-app Jagex sign-in (official OSRS app OAuth client) removed. -->
+<!--
 
 
         <service

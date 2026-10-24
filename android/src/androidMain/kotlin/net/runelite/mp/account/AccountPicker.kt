@@ -59,82 +59,31 @@ internal class AccountSelection(
     val credentialsFile: java.io.File? = null,
 )
 
+
 /**
  * The pre-boot Compose screen that picks what to launch with. Sits in front of
- * [net.runelite.mp.RuneLiteLauncher]; tapping a character calls [onSelect] and the host
+ * [net.runelite.mp.RuneLiteLauncher]; tapping an account calls [onSelect] and the host
  * begins the normal RL boot flow with that account's `JX_*` values seeded into the env.
  *
- * Two sources feed it:
- *  - **Jagex accounts** signed in through [JagexLoginScreen]. One card per Jagex account,
- *    expanding to the characters on it — the same account → character shape the desktop
- *    Jagex launcher uses, and the reason multiple accounts can coexist here at all.
- *  - **Imported credentials**, the older path: a `credentials.properties` copied off a
- *    desktop launcher via the SAF picker. Kept as the escape hatch for anyone who'd
- *    rather not sign in on the phone, and so existing setups keep working.
+ * Hardened build: the only account source is an imported `credentials.properties`
+ * produced by desktop RuneLite through the Jagex Launcher. The in-app sign-in, which
+ * reused the official OSRS Android app's OAuth client, has been removed.
  */
 @Composable
 internal fun AccountPicker(onSelect: (AccountSelection) -> Unit)
 {
     val context = LocalContext.current
-    // Sign-in runs in its own Activity rather than inline here — see [JagexLoginActivity]
-    // for why (an intent filter for the `jagex:` return scheme, which only an Activity can
-    // own).
-    //
-    // Reloading is driven by our own RESUMED, not by an activity result. JagexLoginActivity
-    // is launchMode=singleTask so the browser's `jagex:` return reaches the instance that
-    // is already running the flow, and Android answers startActivityForResult for a
-    // new-task activity with an immediate RESULT_CANCELED — the callback would fire before
-    // sign-in even began and never again. Coming back to the foreground is the signal that
-    // actually means "something may have changed".
-    var reloadKey by remember { mutableStateOf(0) }
-    val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) reloadKey++
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-    }
-
-    PickerContent(
-        reloadKey = reloadKey,
-        onAddAccount = {
-            context.startActivity(Intent(context, JagexLoginActivity::class.java))
-        },
-        // A full sign-in: the new tokens overwrite this account's file, clearing needsReauth.
-        onReauthorize = {
-            context.startActivity(Intent(context, JagexLoginActivity::class.java))
-        },
-        onSelect = onSelect,
-    )
-}
-
-@Composable
-private fun PickerContent(
-    reloadKey: Int,
-    onAddAccount: () -> Unit,
-    onReauthorize: (JagexAccount) -> Unit,
-    onSelect: (AccountSelection) -> Unit,
-)
-{
-    val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var jagexAccounts by remember { mutableStateOf<List<JagexAccount>>(emptyList()) }
     var imported by remember { mutableStateOf<List<AccountStore.Account>>(emptyList()) }
-    var expanded by remember { mutableStateOf<String?>(null) }
     var status by remember { mutableStateOf<String?>(null) }
     var busyId by remember { mutableStateOf<String?>(null) }
 
     fun refreshList()
     {
-        jagexAccounts = JagexAccountStore.list(context)
         imported = AccountStore.list(context)
-        // With a single Jagex account there's nothing to choose between, so open it.
-        if (expanded == null && jagexAccounts.size == 1) expanded = jagexAccounts.first().sub
     }
 
-    // Keyed on reloadKey so returning from the sign-in Activity re-reads the store.
-    LaunchedEffect(reloadKey) { refreshList() }
+    LaunchedEffect(Unit) { refreshList() }
 
     // SAF document picker. Returns a content:// URI; we read the bytes ourselves so we
     // can validate the file *before* it lands in our app-private dir.
@@ -154,7 +103,7 @@ private fun PickerContent(
                 return@launch
             }
             val newId = withContext(Dispatchers.IO) {
-                AccountStore.import(context, displayHint, bytes)
+                AccountStore.importOrReplace(context, displayHint, bytes)
             }
             if (newId == null)
             {
@@ -168,62 +117,6 @@ private fun PickerContent(
             refreshList()
             busyId = null
             status = null
-        }
-    }
-
-    /** Renew the session before handing the account off — a stale JX_SESSION_ID is the
-     *  usual reason a launch that worked yesterday lands back on the login screen. */
-    fun launchCharacter(account: JagexAccount, character: JagexCharacter)
-    {
-        // Known-dead refresh token: launching can only fail, so go straight to the fix.
-        if (account.needsReauth)
-        {
-            onReauthorize(account)
-            return
-        }
-        busyId = account.sub
-        status = "Preparing ${character.displayName}…"
-        scope.launch {
-            val prepared = withContext(Dispatchers.IO) {
-                runCatching { JagexAccountStore.prepare(context, account) }
-            }
-            busyId = null
-            val ready = prepared.getOrElse { t ->
-                status = t.message ?: "Couldn't refresh this account. Sign in again."
-                refreshList()
-                return@launch
-            }
-            // prepare() re-lists characters; keep the tapped one if it survived.
-            val target = ready.characters.firstOrNull { it.accountId == character.accountId } ?: character
-            JagexAccountStore.setLastCharacterId(context, target.accountId)
-            status = null
-            onSelect(AccountSelection(credentials = JagexAccountStore.credentials(ready, target)))
-        }
-    }
-
-    fun refreshAccount(account: JagexAccount)
-    {
-        busyId = account.sub
-        status = "Refreshing ${account.displayName}…"
-        scope.launch {
-            val result = withContext(Dispatchers.IO) {
-                runCatching { JagexAccountStore.prepare(context, account) }
-            }
-            busyId = null
-            status = result.exceptionOrNull()?.let { it.message ?: "Refresh failed." }
-            refreshList()
-        }
-    }
-
-    fun signOut(account: JagexAccount)
-    {
-        scope.launch {
-            withContext(Dispatchers.IO) {
-                JagexAuth.revokeToken(account.accessToken)
-                JagexAccountStore.delete(context, account)
-            }
-            if (expanded == account.sub) expanded = null
-            refreshList()
         }
     }
 
@@ -248,40 +141,19 @@ private fun PickerContent(
                 fontWeight = FontWeight.Bold,
             )
             Text(
-                "Pick the character to launch with",
+                "Pick the account to launch with",
                 color = TextSecondary,
                 fontSize = 13.sp,
             )
             Spacer(Modifier.height(24.dp))
 
-            if (jagexAccounts.isEmpty() && imported.isEmpty())
+            if (imported.isEmpty())
             {
                 EmptyState()
                 Spacer(Modifier.height(16.dp))
             }
-
-            val lastCharacter = JagexAccountStore.lastCharacterId(context)
-            for (account in jagexAccounts)
+            else
             {
-                JagexAccountCard(
-                    account = account,
-                    expanded = expanded == account.sub,
-                    busy = busyId == account.sub,
-                    lastCharacterId = lastCharacter,
-                    onToggle = { expanded = if (expanded == account.sub) null else account.sub },
-                    onLaunch = { launchCharacter(account, it) },
-                    onRefresh = { refreshAccount(account) },
-                    onReauthorize = { onReauthorize(account) },
-                    onSignOut = { signOut(account) },
-                )
-                Spacer(Modifier.height(10.dp))
-            }
-
-            PrimaryButton("+ Add Jagex account", onClick = onAddAccount)
-
-            if (imported.isNotEmpty())
-            {
-                Spacer(Modifier.height(28.dp))
                 SectionLabel("Imported credentials")
                 Spacer(Modifier.height(8.dp))
                 for (acc in imported)
@@ -313,7 +185,7 @@ private fun PickerContent(
             }
 
             Spacer(Modifier.height(12.dp))
-            OutlineButton("Import credentials.properties") {
+            PrimaryButton("Import credentials.properties") {
                 importLauncher.launch(arrayOf("text/plain", "*/*"))
             }
             if (status != null)
@@ -323,8 +195,7 @@ private fun PickerContent(
             }
             Spacer(Modifier.height(12.dp))
             Text(
-                "Accounts and tokens are stored in this app's private storage and are only " +
-                    "ever sent back to Jagex.",
+                "Tokens are stored in this app's private storage and are only ever sent to Jagex.",
                 color = TextDisabled,
                 fontSize = 10.sp,
             )
@@ -343,8 +214,9 @@ private fun EmptyState()
         contentAlignment = Alignment.Center,
     ) {
         Text(
-            "No accounts yet. Sign in with your Jagex account to pull in its characters, " +
-                "or import a credentials.properties from a desktop launcher.",
+            "No accounts yet. On your PC, launch RuneLite through the Jagex Launcher with " +
+                "--insecure-write-credentials, then import the credentials.properties it writes " +
+                "to your .runelite folder.",
             color = TextSecondary,
             fontSize = 12.sp,
         )
@@ -361,171 +233,6 @@ private fun SectionLabel(text: String)
     }
 }
 
-@Composable
-private fun JagexAccountCard(
-    account: JagexAccount,
-    expanded: Boolean,
-    busy: Boolean,
-    lastCharacterId: String?,
-    onToggle: () -> Unit,
-    onLaunch: (JagexCharacter) -> Unit,
-    onRefresh: () -> Unit,
-    onReauthorize: () -> Unit,
-    onSignOut: () -> Unit,
-)
-{
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .background(CardBg)
-            .border(1.dp, SurfaceBorder, RoundedCornerShape(8.dp)),
-    ) {
-        Column(modifier = Modifier.padding(14.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth().clickable(onClick = onToggle),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        account.displayName,
-                        color = Color.White,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        when (account.characters.size)
-                        {
-                            0 -> "No characters found"
-                            1 -> "1 character"
-                            else -> "${account.characters.size} characters"
-                        },
-                        color = TextSecondary,
-                        fontSize = 12.sp,
-                    )
-                }
-                Text(
-                    if (busy) "…" else if (expanded) "▾" else "▸",
-                    color = TextSecondary,
-                    fontSize = 16.sp,
-                )
-            }
-
-            // Shown collapsed too: this is the one state where nothing on the card works.
-            if (account.needsReauth)
-            {
-                Spacer(Modifier.height(10.dp))
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(Color(0xFF3A1F1F))
-                        .padding(10.dp),
-                ) {
-                    Text(JagexAuth.REAUTH_MESSAGE, color = Color(0xFFF2A0A0), fontSize = 12.sp)
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        "You'll be asked to sign in to this Jagex account again.",
-                        color = TextSecondary,
-                        fontSize = 11.sp,
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(5.dp))
-                            .background(BrandOrange)
-                            .clickable(enabled = !busy, onClick = onReauthorize)
-                            .padding(horizontal = 12.dp, vertical = 6.dp),
-                    ) {
-                        Text("Re-authorize", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                    }
-                }
-            }
-
-            if (expanded)
-            {
-                Spacer(Modifier.height(10.dp))
-                if (account.characters.isEmpty())
-                {
-                    Text(
-                        "No characters on this account yet. Refresh once you've created one.",
-                        color = TextSecondary,
-                        fontSize = 11.sp,
-                    )
-                }
-                for (character in account.characters)
-                {
-                    CharacterRow(
-                        character = character,
-                        highlight = character.accountId == lastCharacterId,
-                        enabled = !busy,
-                        onLaunch = { onLaunch(character) },
-                    )
-                    Spacer(Modifier.height(6.dp))
-                }
-                Spacer(Modifier.height(4.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        if (account.lastRefreshedEpochMs <= 0) "Never refreshed"
-                        else "Refreshed ${relativeTime(account.lastRefreshedEpochMs)}",
-                        color = TextDisabled,
-                        fontSize = 10.sp,
-                        modifier = Modifier.weight(1f),
-                    )
-                    MiniBtn("Refresh", onRefresh)
-                    Spacer(Modifier.size(6.dp))
-                    MiniBtn("Sign out", onSignOut)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun CharacterRow(
-    character: JagexCharacter,
-    highlight: Boolean,
-    enabled: Boolean,
-    onLaunch: () -> Unit,
-)
-{
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(6.dp))
-            .background(if (highlight) MediumGray else Color(0xFF171717))
-            .clickable(enabled = enabled, onClick = onLaunch)
-            .padding(horizontal = 12.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            character.displayName,
-            color = Color.White,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Medium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
-        // A watch has no width to spare: the row itself launches, so the name gets it all.
-        if (isWatch()) return@Row
-        if (highlight)
-        {
-            Text("last used", color = TextDisabled, fontSize = 10.sp)
-            Spacer(Modifier.size(8.dp))
-        }
-        Box(
-            modifier = Modifier
-                .clip(RoundedCornerShape(5.dp))
-                .background(BrandOrange)
-                .padding(horizontal = 12.dp, vertical = 5.dp),
-        ) {
-            Text("Launch", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-        }
-    }
-}
 
 @Composable
 private fun isWatch(): Boolean {
